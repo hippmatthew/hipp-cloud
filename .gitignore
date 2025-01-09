@@ -1,0 +1,6 @@
+# Directories
+/obj/
+/bin/
+
+# Files
+output.log
