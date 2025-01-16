@@ -14,49 +14,98 @@ int main(int argc, char ** argv) {
   int port = 0;
   (void)sscanf(argv[1], "%d", &port);
 
-  logger_t logger = {0};
-  set_path(&logger, argv[2]);
-  begin_log(&logger);
+  log_t log = {0};
+  set_log_path(&log, argv[2]);
+  begin_log(&log);
 
   server_t server = {0};
 
   switch(start(&server, port)) {
     case SERVER_OK:
-      log_msg(&logger, "server starrted listening on port %s\n", argv[1]);
+      log_msg(log.fd, "server started listening on port %s\n", argv[1]);
       break;
     case SERVER_SOCKET_ERR:
-      log_msg(&logger, "failed to create socket");
+      log_msg(log.fd, "failed to create socket");
       exit(EXIT_FAILURE);
     case SERVER_BIND_ERROR:
-      log_msg(&logger, "failed to bind socket to port %s\n", argv[1]);
+      log_msg(log.fd, "failed to bind socket to port %s\n", argv[1]);
       exit(EXIT_FAILURE);
     case SERVER_LISTEN_ERROR:
-      log_msg(&logger, "socket failed to listen on port %s\n", argv[1]);
+      log_msg(log.fd, "socket failed to listen on port %s\n", argv[1]);
       exit(EXIT_FAILURE);
   }
 
-  int client_fd = accept_client(server.socket_fd);
-  if (client_fd == -1) {
-    log_msg(&logger, "failed to accept client\n");
-    stop(&server);
-    exit(EXIT_FAILURE);
+  while (1) {
+    int client_fd = accept_client(server.socket_fd);
+    if (client_fd == -1) {
+      log_msg(log.fd, "failed to accept client\n");
+      stop(&server);
+      exit(EXIT_FAILURE);
+    }
+
+    log_msg(log.fd, "client connected\n");
+
+    request_t request = {0};
+    if (parse(client_fd, &request) == PARSE_INVALID) {
+      log_msg(log.fd, "\tPARSE ERR\n");
+
+      close(client_fd);
+      log_msg(log.fd, "\tDISCONNECT\n");
+
+      continue;
+    }
+
+    log_msg(log.fd, "\t%s %s %s\n", request.method, request.path, request.http_prot);
+
+    if (!strcmp(request.path, "/stop")) {
+      close(client_fd);
+      log_msg(log.fd, "\tDISCONNECT\n");
+      break;
+    }
+
+    response_t response = {0};
+    switch (handle_request(&request, &response)) {
+      case HANDLE_OK:
+        log_msg(log.fd, "\tRES %s %d\n", response.path, response.stylesheet);
+        break;
+      case HANDLE_INVALID_METHOD:
+        log_msg(log.fd, "\tINVALID METHOD\n");
+        close(client_fd);
+        log_msg(log.fd, "\tDISCONNECT\n");
+        continue;
+    }
+
+    switch (respond(client_fd, &response)) {
+      case RES_OK:
+        log_msg(log.fd, "\tRESPONDED\n");
+        break;
+      case RES_FAILED_OPEN:
+        log_msg(log.fd, "\tRES OPEN ERR\n");
+        break;
+      case RES_FAILED_STAT:
+        log_msg(log.fd, "\tRES STAT ERR\n");
+        break;
+      case RES_FAILED_ALLOC:
+        log_msg(log.fd, "\tRES ALLOC ERR\n");
+        break;
+      case RES_FAILED_READ:
+        log_msg(log.fd, "\tRES READ ERR\n");
+        break;
+      case RES_FAILED_HEADER:
+        log_msg(log.fd, "\tRES HEAD ERR\n");
+        break;
+      case RES_FAILED_SEND:
+        log_msg(log.fd, "\tRES SEND ERR\n");
+    }
+
+    close(client_fd);
+    log_msg(log.fd, "\tDISCONNECT\n");
   }
 
-  log_msg(&logger, "client connected\n");
-
-  request_t request = {0};
-  if (parse(client_fd, &request) == PARSE_OK)
-    log_msg(&logger, "\t%s %s %s\n", request.method, request.path, request.http_prot);
-  else
-    log_msg(&logger, "failed to parse http request\n");
-
-  close(client_fd);
-  log_msg(&logger, "client disconnected\n");
-
   stop(&server);
-  log_msg(&logger, "server stopped listening on port %s\n", argv[1]);
+  log_msg(log.fd, "server stopped listening on port %s\n", argv[1]);
 
-  end_log(&logger);
+  end_log(&log);
 
   exit(EXIT_SUCCESS);
 }

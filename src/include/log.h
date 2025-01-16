@@ -1,17 +1,14 @@
 #ifndef hippcloud_log_h
 #define hippcloud_log_h
 
-#include <stdio.h>
-
 typedef struct {
-  char path[256];
-  FILE * file;
-  int initialized;
-} logger_t;
+  char path[257];
+  int fd;
+} log_t;
 
-void set_path(logger_t * logger, const char * path);
-void begin_log(logger_t * logger);
-void end_log(logger_t * logger);
-void log_msg(logger_t * logger, const char * format, ...);
+void set_log_path(log_t * log, const char * path);
+void begin_log(log_t * log);
+void end_log(log_t * log);
+void log_msg(int fd, const char * format, ...);
 
 #endif // hippcloud_log_h

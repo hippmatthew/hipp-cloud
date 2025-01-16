@@ -3,43 +3,41 @@
 #include <stdio.h>
 #include <string.h>
 #include <stdarg.h>
+#include <fcntl.h>
+#include <unistd.h>
 
-void set_path(logger_t * logger, const char * path) {
+void set_log_path(log_t * log, const char * path) {
   if (strlen(path) > 255) {
-    (void)printf("given path exceeds character limit (256)\n");
+    (void)printf("given path exceeds character limit of 256\n");
     return;
   }
 
-  (void)memcpy((void *)logger->path, path, strlen(path));
+  (void)memcpy((void *)log->path, path, strlen(path));
+  log->path[strlen(path)] = '\0';
 }
 
-void begin_log(logger_t * logger) {
-  logger->file = fopen(logger->path, "w");
-  if (logger->file == NULL) {
-    (void)printf("failed to open log file\n");
-    logger->initialized = 0;
-    return;
-  }
-
-  logger->initialized = 1;
+void begin_log(log_t * log) {
+  log->fd = open(log->path, O_WRONLY | O_CREAT | O_TRUNC, 0644);
+    if (log->fd == -1)
+    (void)perror("open");
 }
 
-void end_log(logger_t * logger) {
-  if (fclose(logger->file) != 0) {
-    (void)printf("failed to close log file\n");
-    return;
-  }
+void end_log(log_t * log) {
+  if (log->fd == -1) return;
 
-  logger->file = NULL;
-  logger->initialized = 0;
+  (void)close(log->fd);
+  log->fd = -1;
 }
 
-void log_msg(logger_t * logger, const char * format, ...) {
+void log_msg(int fd, const char * format, ...) {
   va_list args;
   va_start(args, format);
 
-  (void)vfprintf(logger->file, format, args);
-  (void)fflush(logger->file);
+  char buf[256] = {0};
+  vsprintf(buf, format, args);
+
+  (void)write(fd, buf, strlen(buf));
+  (void)fsync(fd);
 
   va_end(args);
 }

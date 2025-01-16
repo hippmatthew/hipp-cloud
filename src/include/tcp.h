@@ -7,6 +7,8 @@
 #include <string.h>
 #include <unistd.h>
 
+#include "clients.h"
+
 typedef enum {
   SERVER_OK,
   SERVER_SOCKET_ERR,
@@ -22,5 +24,6 @@ typedef struct {
 server_status_e start(server_t * server, int port);
 void stop(server_t * server);
 int accept_client(int server_socket);
+int poll_clients(clients_t * clients);
 
 #endif // hippcloud_server_h
