@@ -1,7 +1,9 @@
+#include "include/http.h"
 #include "include/server.h"
 
 #include <stdio.h>
 #include <getopt.h>
+#include <string.h>
 
 int main(int argc, char ** argv) {
   char * port = NULL;
@@ -73,29 +75,111 @@ int main(int argc, char ** argv) {
 
     for (int i = 1; i <= server.client_count + 1 && event_count > 0; ++i) {
       if (poll_fds[i].revents & POLLIN) {
-        // parse HTTP request
-
         --event_count;
+        int index = server.client_cache[i - 1];
 
-        int index = get_client_index(poll_fds[i].fd, server.clients);
-        if (index == -1) continue;
+        if (server.clients[index].sock_fd != poll_fds[i].fd) {
+          (void)printf("fd mismatch for client %s (poll: %d, fd: %d). disconnecting\n",
+            inet_ntoa(server.clients[index].addr.sin_addr),
+            poll_fds[i].fd,
+            server.clients[index].sock_fd
+          );
 
-        char buf[4096] = {0};
-        int bytes = read(poll_fds[i].fd, buf, 4096);
-        if (bytes <= 0) {
           (void)close(poll_fds[i].fd);
-          (void)printf("%s (fd %d) disconnected\n",
-            inet_ntoa(server.clients[i - 1].addr.sin_addr), poll_fds[i].fd);
+          disconnect_client(&server.clients[index]);
+
           continue;
         }
 
-        server.clients[i - 1].poll_event = POLLOUT;
+        request_t request = {0};
+        switch(parse_request(poll_fds[i].fd, &request)) {
+          case PARSE_OK:
+            (void)printf("%s (fd %d): %s %s %s\n",
+              inet_ntoa(server.clients[index].addr.sin_addr), poll_fds[i].fd,
+              request.method, request.path, request.http_prot
+            );
+            break;
+          case PARSE_INVALID:
+            (void)printf("%s (fd %d): failed to parse request. disconnecting\n",
+              inet_ntoa(server.clients[index].addr.sin_addr), poll_fds[i].fd
+            );
+            disconnect_client(&server.clients[index]);
+            continue;
+        }
+
+        switch(process_request(request, &server.clients[index].response)) {
+          case PROC_OK:
+            (void)printf("%s (fd %d): processed request\n",
+              inet_ntoa(server.clients[index].addr.sin_addr), poll_fds[i].fd
+            );
+            break;
+          case PROC_FILE_ERR:
+            (void)printf("%s (fd %d): failed to process request. file failed to open\n",
+              inet_ntoa(server.clients[index].addr.sin_addr), poll_fds[i].fd
+            );
+            continue;
+          case PROC_BYTES_ERR:
+            (void)printf("%s (fd %d): failed to process request. file size not obtained\n",
+              inet_ntoa(server.clients[index].addr.sin_addr), poll_fds[i].fd
+            );
+            continue;
+          case PROC_ALLOC_ERR:
+            (void)printf("%s (fd %d): failed to process request. buffer not allocated\n",
+              inet_ntoa(server.clients[index].addr.sin_addr), poll_fds[i].fd
+            );
+            continue;
+          case PROC_READ_ERR:
+            (void)printf("%s (fd %d): failed to process request. file could not be read\n",
+              inet_ntoa(server.clients[index].addr.sin_addr), poll_fds[i].fd
+            );
+            continue;
+          case PROC_HEAD_ERR:
+            (void)printf("%s (fd %d): failed to process request. header was not constructed\n",
+              inet_ntoa(server.clients[index].addr.sin_addr), poll_fds[i].fd
+            );
+            continue;
+        }
+
+        if (!strcmp(request.path, "/stop"))
+          server.is_running = 0;
+
+        server.clients[index].poll_event = POLLOUT;
       }
       else if (poll_fds[i].revents & POLLOUT) {
-        // send HTTP response
-
         --event_count;
-        server.clients[i - 1].poll_event = POLLIN;
+        int index = server.client_cache[i - 1];
+
+        if (server.clients[index].sock_fd != poll_fds[i].fd) {
+          (void)printf("hipp-cloud: fd mismatch for client %s (poll: %d, fd: %d). disconnecting\n",
+            inet_ntoa(server.clients[index].addr.sin_addr),
+            poll_fds[i].fd,
+            server.clients[index].sock_fd
+          );
+
+          (void)close(poll_fds[i].fd);
+          disconnect_client(&server.clients[index]);
+
+          continue;
+        }
+
+        switch(send_response(poll_fds[i].events, server.clients[index].response)) {
+          case RES_OK:
+            (void)printf("%s (fd %d): recieved response\n",
+              inet_ntoa(server.clients[index].addr.sin_addr), poll_fds[i].fd
+            );
+            break;
+          case RES_HEAD_ERR:
+            (void)printf("%s (fd %d): failed to recieve header\n",
+              inet_ntoa(server.clients[index].addr.sin_addr), poll_fds[i].fd
+            );
+           break;
+          case RES_DATA_ERR:
+            (void)printf("%s (fd %d): failed to recieve data\n",
+              inet_ntoa(server.clients[index].addr.sin_addr), poll_fds[i].fd
+            );
+        }
+
+        server.clients[index].poll_event = POLLIN;
       }
     }
   }

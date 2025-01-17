@@ -5,32 +5,27 @@
 #define HTTP_PROT_MAX_LEN   16
 #define HTTP_PATH_MAX_LEN   256
 #define HTTP_REQ_MAX_LEN    8192
+#define HTTP_HEAD_MAX_LEN   1024
 
 typedef enum {
-  GET,
-  POST,
-  METHOD_INVALID
-} method_e;
-
-typedef enum {
+  PARSE_OK,
   PARSE_INVALID,
-  PARSE_OK
 } parse_status_e;
 
 typedef enum {
-  HANDLE_OK,
-  HANDLE_INVALID_METHOD
-} handle_status_e;
+  PROC_OK,
+  PROC_FILE_ERR,
+  PROC_BYTES_ERR,
+  PROC_ALLOC_ERR,
+  PROC_READ_ERR,
+  PROC_HEAD_ERR
+} proc_status_e;
 
 typedef enum {
   RES_OK,
-  RES_FAILED_OPEN,
-  RES_FAILED_STAT,
-  RES_FAILED_ALLOC,
-  RES_FAILED_READ,
-  RES_FAILED_HEADER,
-  RES_FAILED_SEND
-} response_status_e;
+  RES_HEAD_ERR,
+  RES_DATA_ERR
+} res_status_e;
 
 typedef struct {
   char method[HTTP_METHOD_MAX_LEN];
@@ -39,17 +34,15 @@ typedef struct {
 } request_t;
 
 typedef struct {
-  char path[HTTP_PATH_MAX_LEN];
-  int stylesheet;
-} response_t;
-
-typedef struct {
+  int header_size;
+  char header[HTTP_HEAD_MAX_LEN];
   long bytes;
   char * data;
-} http_response_t;
+} response_t;
 
-parse_status_e parse(int socket, request_t * request);
-handle_status_e handle_request(request_t * request, response_t * response);
-response_status_e respond(int socket, response_t * response);
+parse_status_e parse_request(int socket, request_t * request);
+proc_status_e process_request(request_t request, response_t * response);
+res_status_e send_response(int fd, response_t response);
+
 
 #endif // hippcloud_protocol_h

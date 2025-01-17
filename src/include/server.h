@@ -26,8 +26,7 @@ typedef struct {
   int sock_fd;
   int poll_event;
   struct sockaddr_in addr;
-  request_t request;
-  http_response_t response;
+  response_t response;
 } client_t;
 
 typedef struct {
@@ -36,12 +35,13 @@ typedef struct {
   struct sockaddr_in addr;
   int client_count;
   client_t clients[MAX_CLIENTS];
+  int client_cache[MAX_CLIENTS];
 } server_t;
 
 server_status_e start_server(server_t * server, char * port);
 int stop_server(server_t * server);
 int poll_events(server_t * server, struct pollfd * poll_fds);
 accept_status_e accept_client(server_t * server, int * index);
-int get_client_index(int fd, client_t * clients);
+void disconnect_client(client_t * client);
 
 #endif // hippcloud_tcp_h

@@ -3,6 +3,7 @@
 #include <string.h>
 #include <unistd.h>
 #include <stdio.h>
+#include <stdlib.h>
 
 int find_index(client_t * clients);
 
@@ -13,12 +14,10 @@ server_status_e start_server(server_t * server, char * port_str) {
 
     memset(&server->clients[i].addr, 0, sizeof(struct sockaddr_in));
 
-    memset(&server->clients[i].request.method, '\0', HTTP_METHOD_MAX_LEN);
-    memset(&server->clients[i].request.path, '\0', HTTP_PATH_MAX_LEN);
-    memset(&server->clients[i].request.http_prot, '\0', HTTP_PROT_MAX_LEN);
-
     server->clients[i].response.bytes = 0;
     server->clients[i].response.data = NULL;
+
+    server->client_cache[i] = -1;
   }
 
   server->client_count = 0;
@@ -56,7 +55,7 @@ int stop_server(server_t * server) {
   for (int i = 0; i < MAX_CLIENTS; ++i) {
     if (server->clients[i].sock_fd == -1) continue;
 
-    (void)close(server->clients[i].sock_fd);
+    disconnect_client(&server->clients[i]);
     ++clients;
   }
 
@@ -71,6 +70,7 @@ int poll_events(server_t * server, struct pollfd * poll_fds) {
   for (int i = 0, j = 1; i < MAX_CLIENTS && remaining_clients > 0; ++i) {
     if (server->clients[i].sock_fd == -1) continue;
 
+    server->client_cache[j - 1] = i;
     poll_fds[j].fd = server->clients[i].sock_fd;
     poll_fds[j].events = server->clients[i].poll_event;
 
@@ -98,13 +98,14 @@ accept_status_e accept_client(server_t * server, int * index) {
   return ACCEPT_OK;
 }
 
-int get_client_index(int fd, client_t * clients) {
-  for (int i = 0; i < MAX_CLIENTS; ++i) {
-    if (clients[i].sock_fd == fd)
-      return i;
-  }
+void disconnect_client(client_t * client) {
+  if (client->sock_fd == -1) return;
 
-  return -1;
+  (void)close(client->sock_fd);
+  client->sock_fd = -1;
+
+  if (client->response.data != NULL)
+    free(client->response.data);
 }
 
 int find_index(client_t * clients) {
