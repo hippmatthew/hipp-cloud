@@ -1,111 +1,106 @@
-#include "include/log.h"
-#include "include/tcp.h"
-#include "include/http.h"
+#include "include/server.h"
 
 #include <stdio.h>
-#include <stdlib.h>
+#include <getopt.h>
 
 int main(int argc, char ** argv) {
-  if (argc != 3) {
-    (void)printf("incorrect number of arguments. usage is as follows: server <port> <log file path>\n");
-    exit(EXIT_FAILURE);
+  char * port = NULL;
+
+  int c = -1;
+  while ((c = getopt(argc, argv, "p:")) != -1) {
+    switch (c) {
+      case 'p':
+        port = optarg;
+        break;
+      case '?':
+        (void)printf("invalid argument.\ncorrect usage: server -p <port>\n");
+        break;
+      default:
+        return -1;
+    }
   }
 
-  int port = 0;
-  (void)sscanf(argv[1], "%d", &port);
-
-  log_t log = {0};
-  set_log_path(&log, argv[2]);
-  begin_log(&log);
+  if (port == NULL) {
+    (void)printf("must supply a port.\ncorrect usage: server -p <port> -o <path/to/log>\n");
+    return -1;
+  }
 
   server_t server = {0};
+  server.is_running = 0;
 
-  switch(start(&server, port)) {
+  switch (start_server(&server, port)) {
     case SERVER_OK:
-      log_msg(log.fd, "server started listening on port %s\n", argv[1]);
+      (void)printf("listening on port %s\n", port);
+      server.is_running = 1;
       break;
     case SERVER_SOCKET_ERR:
-      log_msg(log.fd, "failed to create socket");
-      exit(EXIT_FAILURE);
-    case SERVER_BIND_ERROR:
-      log_msg(log.fd, "failed to bind socket to port %s\n", argv[1]);
-      exit(EXIT_FAILURE);
-    case SERVER_LISTEN_ERROR:
-      log_msg(log.fd, "socket failed to listen on port %s\n", argv[1]);
-      exit(EXIT_FAILURE);
+      (void)printf("failed to create non-waiting socket\n");
+      return -1;
+    case SERVER_INVALID_PORT:
+      (void)printf("port %s deemed invalid\n", port);
+      return -1;
+    case SERVER_BIND_ERR:
+      (void)printf("failed to bind server to port %s\n", port);
+      return -1;
+    case SERVER_LISTEN_ERR:
+      (void)printf("failed to listen on port %s\n", port);
+      return -1;
   }
 
-  while (1) {
-    int client_fd = accept_client(server.socket_fd);
-    if (client_fd == -1) {
-      log_msg(log.fd, "failed to accept client\n");
-      stop(&server);
-      exit(EXIT_FAILURE);
+  struct pollfd poll_fds[MAX_CLIENTS + 1];
+
+  poll_fds[0].fd = server.sock_fd;
+  poll_fds[0].events = POLLIN;
+
+  while (server.is_running) {
+    int event_count = poll_events(&server, poll_fds);
+
+    if (poll_fds[0].revents & POLLIN) {
+      int index;
+      switch(accept_client(&server, &index)) {
+        case ACCEPT_OK:
+          (void)printf("%s (fd %d) connected\n",
+            inet_ntoa(server.clients[index].addr.sin_addr), server.clients[index].sock_fd);
+          break;
+        case ACCEPT_SERVER_FULL_ERR:
+          (void)printf("attempted to connect client but server is full\n");
+          break;
+        case ACCEPT_SOCKET_ERR:
+          (void)printf("attempted to connect client but failed to create socket\n");
+      }
+      --event_count;
     }
 
-    log_msg(log.fd, "client connected\n");
+    for (int i = 1; i <= server.client_count + 1 && event_count > 0; ++i) {
+      if (poll_fds[i].revents & POLLIN) {
+        // parse HTTP request
 
-    request_t request = {0};
-    if (parse(client_fd, &request) == PARSE_INVALID) {
-      log_msg(log.fd, "\tPARSE ERR\n");
+        --event_count;
 
-      close(client_fd);
-      log_msg(log.fd, "\tDISCONNECT\n");
+        int index = get_client_index(poll_fds[i].fd, server.clients);
+        if (index == -1) continue;
 
-      continue;
+        char buf[4096] = {0};
+        int bytes = read(poll_fds[i].fd, buf, 4096);
+        if (bytes <= 0) {
+          (void)close(poll_fds[i].fd);
+          (void)printf("%s (fd %d) disconnected\n",
+            inet_ntoa(server.clients[i - 1].addr.sin_addr), poll_fds[i].fd);
+          continue;
+        }
+
+        server.clients[i - 1].poll_event = POLLOUT;
+      }
+      else if (poll_fds[i].revents & POLLOUT) {
+        // send HTTP response
+
+        --event_count;
+        server.clients[i - 1].poll_event = POLLIN;
+      }
     }
-
-    log_msg(log.fd, "\t%s %s %s\n", request.method, request.path, request.http_prot);
-
-    if (!strcmp(request.path, "/stop")) {
-      close(client_fd);
-      log_msg(log.fd, "\tDISCONNECT\n");
-      break;
-    }
-
-    response_t response = {0};
-    switch (handle_request(&request, &response)) {
-      case HANDLE_OK:
-        log_msg(log.fd, "\tRES %s %d\n", response.path, response.stylesheet);
-        break;
-      case HANDLE_INVALID_METHOD:
-        log_msg(log.fd, "\tINVALID METHOD\n");
-        close(client_fd);
-        log_msg(log.fd, "\tDISCONNECT\n");
-        continue;
-    }
-
-    switch (respond(client_fd, &response)) {
-      case RES_OK:
-        log_msg(log.fd, "\tRESPONDED\n");
-        break;
-      case RES_FAILED_OPEN:
-        log_msg(log.fd, "\tRES OPEN ERR\n");
-        break;
-      case RES_FAILED_STAT:
-        log_msg(log.fd, "\tRES STAT ERR\n");
-        break;
-      case RES_FAILED_ALLOC:
-        log_msg(log.fd, "\tRES ALLOC ERR\n");
-        break;
-      case RES_FAILED_READ:
-        log_msg(log.fd, "\tRES READ ERR\n");
-        break;
-      case RES_FAILED_HEADER:
-        log_msg(log.fd, "\tRES HEAD ERR\n");
-        break;
-      case RES_FAILED_SEND:
-        log_msg(log.fd, "\tRES SEND ERR\n");
-    }
-
-    close(client_fd);
-    log_msg(log.fd, "\tDISCONNECT\n");
   }
 
-  stop(&server);
-  log_msg(log.fd, "server stopped listening on port %s\n", argv[1]);
+  (void)printf("disconnected %d clients\nstopped listening", stop_server(&server));
 
-  end_log(&log);
-
-  exit(EXIT_SUCCESS);
+  return 0;
 }

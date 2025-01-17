@@ -1,7 +1,10 @@
 #ifndef hippcloud_protocol_h
 #define hippcloud_protocol_h
 
-#include "common.h"
+#define HTTP_METHOD_MAX_LEN 8
+#define HTTP_PROT_MAX_LEN   16
+#define HTTP_PATH_MAX_LEN   256
+#define HTTP_REQ_MAX_LEN    8192
 
 typedef enum {
   GET,
@@ -41,9 +44,9 @@ typedef struct {
 } response_t;
 
 typedef struct {
-  int fd;
-  char buf[HTTP_REQ_MAX_LEN];
-} client_t;
+  long bytes;
+  char * data;
+} http_response_t;
 
 parse_status_e parse(int socket, request_t * request);
 handle_status_e handle_request(request_t * request, response_t * response);
